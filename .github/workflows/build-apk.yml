@@ -1,0 +1,66 @@
+name: Build APK
+
+# Runs on every push, and on demand from the Actions tab.
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write        # needed to attach the APK to a Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the project
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      # Uploading through the GitHub web UI drops the executable bit.
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build the APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Name it something recognisable
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk out/paisa.apk
+          ls -lh out/
+
+      # Kept as a fallback download in case the Release step is ever skipped.
+      - name: Attach the APK to this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: paisa-apk
+          path: out/paisa.apk
+
+      - name: Publish a Release you can download on your phone
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}" out/paisa.apk \
+            --title "Paisa build ${{ github.run_number }}" \
+            --notes "Open this page in Chrome on your Android phone and tap **paisa.apk** to install.
+
+          Android 8.0 or newer. You will be asked to allow installs from Chrome the first time, and Play Protect will warn that the app was not scanned — that is expected for an app you built yourself rather than downloaded from the Play Store."
+
+      # Informational only: a failing parser test must never cost you the APK,
+      # so this runs last and does not fail the build.
+      - name: Run the SMS parser tests
+        continue-on-error: true
+        run: ./gradlew test --no-daemon
